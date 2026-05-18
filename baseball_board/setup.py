@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'Baseball_board'
+package_name = 'baseball_board'
 
 setup(
     name=package_name,
@@ -20,6 +20,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'Baseball_field = baseball_board.Baseball_field:main'
         ],
     },
 )
