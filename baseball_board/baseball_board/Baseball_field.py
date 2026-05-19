@@ -26,10 +26,6 @@ class BaseBallFieldServer(Node):
         self.pitcher_command = None
         self.batter_command = None
 
-        # Enter通知
-        self.bat_button_received = False
-        self.swing_button_received = False
-
         # 判定結果
         self.judged = False
         self.pitcher_answer = None
@@ -59,6 +55,7 @@ class BaseBallFieldServer(Node):
         self.runner_started = False
         self.runner_done = False
         self.runner_answer = None
+        self.restart_sent = False
 
         # ピッチャー側から球種を受け取るAction Server
         self.pitcher_server = ActionServer(
@@ -78,34 +75,9 @@ class BaseBallFieldServer(Node):
             callback_group=self.callback_group
         )
 
-        # /bat_button を受け取るSubscriber
-        self.bat_button_sub = self.create_subscription(
-            Empty,
-            '/bat_button',
-            self.bat_button_callback,
-            10
-        )
-
-        # /swing_button を受け取るSubscriber
-        self.swing_button_sub = self.create_subscription(
-            Empty,
-            '/swing_button',
-            self.swing_button_callback,
-            10
-        )
 
         self.get_logger().info('Field Action Server started.')
-        self.get_logger().info('pitcher_command, batter_command, /bat_button, /swing_button を待機中です。')
-
-    def bat_button_callback(self, msg):
-        with self.lock:
-            self.bat_button_received = True
-            self.get_logger().info('/bat_button を受信しました。')
-
-    def swing_button_callback(self, msg):
-        with self.lock:
-            self.swing_button_received = True
-            self.get_logger().info('/swing_button を受信しました。')
+        self.get_logger().info('pitcher_command, batter_commandを待機中です。')
 
     def judge(self):
         """
@@ -134,16 +106,14 @@ class BaseBallFieldServer(Node):
 
         self.judged = True
 
-        self.get_logger().info('判定完了。ただし、Result送信は /bat_button と /swing_button の受信後に行います。')
+        self.get_logger().info('判定完了。Action Result送信処理へ進みます。')
 
     def is_ready_to_send_result(self):
         """
         Action Resultを返してよい状態か確認する
         """
         return (
-            self.judged and
-            self.bat_button_received and
-            self.swing_button_received
+            self.judged
         )
 
     def make_feedback_text(self):
@@ -160,15 +130,6 @@ class BaseBallFieldServer(Node):
         if not self.judged:
             return '判定処理中です。'
 
-        if not self.bat_button_received and not self.swing_button_received:
-            return '/bat_button と /swing_button の入力待ちです。'
-
-        if not self.bat_button_received:
-            return '/bat_button の入力待ちです。'
-
-        if not self.swing_button_received:
-            return '/swing_button の入力待ちです。'
-
         return '結果送信準備完了です。'
 
     def reset_round_if_needed(self):
@@ -181,11 +142,11 @@ class BaseBallFieldServer(Node):
         if self.result_return_count >= 2:
             self.get_logger().info('両ClientへResultを返しました。次のラウンドへ移行します。')
 
+            # HitでもMissでも、次ラウンド開始用にrestartを送る
+            self.publish_restart()
+
             self.pitcher_command = None
             self.batter_command = None
-
-            self.bat_button_received = False
-            self.swing_button_received = False
 
             self.judged = False
             self.pitcher_answer = None
@@ -196,6 +157,8 @@ class BaseBallFieldServer(Node):
             self.runner_answer = None
 
             self.result_return_count = 0
+            self.restart_sent = False
+
 
     def pitcher_callback(self, goal_handle):
         """
@@ -231,8 +194,7 @@ class BaseBallFieldServer(Node):
         result = BaseballJudge.Result()
         result.answer = pitcher_result_answer
 
-        with self.lock:
-            self.reset_round_if_needed()
+        self.reset_round_if_needed()
 
         return result
 
@@ -270,8 +232,7 @@ class BaseBallFieldServer(Node):
         result = BaseballJudge.Result()
         result.answer = batter_result_answer
 
-        with self.lock:
-            self.reset_round_if_needed()
+        self.reset_round_if_needed()
 
         return result
 
@@ -282,6 +243,11 @@ class BaseBallFieldServer(Node):
         )
 
     def publish_restart(self):
+        if self.restart_sent:
+            return
+
+        self.restart_sent = True
+
         msg = Empty()
         self.restart_pub.publish(msg)
         self.get_logger().info('/restart を送信しました。')

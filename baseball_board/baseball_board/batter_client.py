@@ -3,6 +3,7 @@
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
+
 from std_msgs.msg import Empty
 from baseball_board.action import BaseballJudge
 
@@ -12,19 +13,64 @@ class BatterActionClient(Node):
     def __init__(self):
         super().__init__('batter_action_client')
 
+        # ==========================
+        # Action Client
+        # ==========================
         self._action_client = ActionClient(
             self,
             BaseballJudge,
             'batter_command'
         )
 
-        self.enter_pub = self.create_publisher(
+        # ==========================
+        # restart subscriber
+        # ==========================
+        self.restart_sub = self.create_subscription(
             Empty,
-            '/swing_button',
+            '/restart',
+            self.restart_callback,
             10
         )
 
-    def send_goal(self, expected_pitch):
+        # ==========================
+        # 状態管理
+        # ==========================
+        self.game_running = False
+        self.restart_pending = False
+
+        # 初回ゲーム開始
+        self.start_game()
+
+    # ==================================================
+    # restart callback
+    # ==================================================
+    def restart_callback(self, msg):
+
+        if self.game_running:
+            self.get_logger().info(
+                '試合中なので restart を保留します'
+            )
+
+            self.restart_pending = True
+            return
+
+        self.get_logger().info(
+            'restart受信 -> 次試合開始'
+        )
+
+        self.start_game()
+
+    # ==================================================
+    # 試合開始
+    # ==================================================
+    def start_game(self):
+
+        self.game_running = True
+
+        expected_pitch = input(
+            '待つ球種を入力してください: '
+        )
+
         goal_msg = BaseballJudge.Goal()
         goal_msg.command = expected_pitch
 
@@ -34,72 +80,91 @@ class BatterActionClient(Node):
 
         self._action_client.wait_for_server()
 
-        return self._action_client.send_goal_async(
+        future = self._action_client.send_goal_async(
             goal_msg,
             feedback_callback=self.feedback_callback
         )
 
+        future.add_done_callback(
+            self.goal_response_callback
+        )
+
+    # ==================================================
+    # feedback
+    # ==================================================
     def feedback_callback(self, feedback_msg):
+
         feedback = feedback_msg.feedback
 
         self.get_logger().info(
             f'フィードバック: {feedback.process}'
         )
 
-    def send_swing_button(self):
-        msg = Empty()
-        self.enter_pub.publish(msg)
+    # ==================================================
+    # goal response
+    # ==================================================
+    def goal_response_callback(self, future):
+
+        goal_handle = future.result()
+
+        if not goal_handle.accepted:
+
+            self.get_logger().info(
+                'ゴール拒否'
+            )
+
+            self.game_running = False
+            return
 
         self.get_logger().info(
-            '/swing_button を送信しました'
-        )
-
-
-def main():
-    rclpy.init()
-
-    batter_client = BatterActionClient()
-
-    expected_pitch = input(
-        '待つ球種を入力してください: '
-    )
-
-    future = batter_client.send_goal(expected_pitch)
-
-    rclpy.spin_until_future_complete(
-        batter_client,
-        future
-    )
-
-    goal_handle = future.result()
-
-    if not goal_handle.accepted:
-        batter_client.get_logger().info(
-            'ゴール拒否'
-        )
-
-    else:
-        batter_client.get_logger().info(
             '打席開始'
         )
 
-        input('Enterキーを押すと /swing_button を送信します: ')
-        batter_client.send_swing_button()
-
         result_future = goal_handle.get_result_async()
 
-        rclpy.spin_until_future_complete(
-            batter_client,
-            result_future
+        result_future.add_done_callback(
+            self.result_callback
         )
 
-        result = result_future.result().result
+    # ==================================================
+    # result
+    # ==================================================
+    def result_callback(self, future):
 
-        batter_client.get_logger().info(
+        result = future.result().result
+
+        self.get_logger().info(
             f'結果: {result.answer}'
         )
 
-    batter_client.destroy_node()
+        self.game_running = False
+
+        if self.restart_pending:
+
+            self.get_logger().info(
+                '保留していた restart を処理します'
+            )
+
+            self.restart_pending = False
+
+            self.start_game()
+
+        else:
+
+            self.get_logger().info(
+                '/restart 待機中...'
+            )
+
+
+def main():
+
+    rclpy.init()
+
+    node = BatterActionClient()
+
+    rclpy.spin(node)
+
+    node.destroy_node()
     rclpy.shutdown()
 
 
