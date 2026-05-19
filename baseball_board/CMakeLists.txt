@@ -9,6 +9,7 @@ find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "action/BaseballJudge.action"
+  "action/RunnerSend.action"
   DEPENDENCIES action_msgs
 )
 
@@ -28,6 +29,12 @@ install(PROGRAMS
   baseball_board/batter_client.py
   DESTINATION lib/${PROJECT_NAME}
   RENAME batter_client
+)
+
+install(PROGRAMS
+  baseball_board/runner_server.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME runner_server
 )
 
 ament_export_dependencies(rosidl_default_runtime)
